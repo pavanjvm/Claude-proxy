@@ -6,6 +6,12 @@ __pycache__/
 venv/
 .env
 
+# Proxy runtime
+proxy/proxy.log
+proxy/.uvicorn.pid
+.uvicorn.pid
+*.log
+
 # Firecrawl scratch
 .firecrawl/
 

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # run.sh — one-command launcher for the Claude -> OpenCode Go proxy.
 #
-#   ./run.sh           # start in the foreground
-#   ./run.sh bg        # start in the background, write logs to proxy/proxy.log
-#   ./run.sh stop      # stop the background instance
-#   ./run.sh status    # show pid + health
-#   ./run.sh test      # curl-based smoke tests
-#   ./run.sh help      # show usage
+#   ./run.sh              # start in the foreground
+#   ./run.sh bg           # start in the background, write logs to proxy/proxy.log
+#   ./run.sh stop         # stop the background instance
+#   ./run.sh status       # show pid + health
+#   ./run.sh test         # curl-based smoke tests
+#   ./run.sh claude-env   # print ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY exports
+#   ./run.sh help         # show usage
+#
+# After `bg`, point Claude Code at the proxy with:
+#   eval "$(./run.sh claude-env)"
 
 set -euo pipefail
 
@@ -25,8 +29,26 @@ ENV_FILE="$PROXY_DIR/.env"
 ENV_EXAMPLE="$PROXY_DIR/.env.example"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8080}"
+# Always point Claude Code at *this* proxy on localhost. Do not inherit any
+# upstream-style ANTHROPIC_* values from the environment — the whole point of
+# the proxy is to keep Claude Code on http://localhost.
+ANTHROPIC_BASE_URL_VALUE="http://localhost:$PORT"
+ANTHROPIC_API_KEY_VALUE="dummy"
 
 cmd="${1:-run}"
+
+print_claude_banner() {
+  echo ""
+  echo "==> Claude Code env (run in any other terminal, or eval them):"
+  echo "    export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL_VALUE"
+  echo "    export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_VALUE"
+  echo ""
+}
+
+print_claude_exports() {
+  echo "export ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL_VALUE"
+  echo "export ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_VALUE"
+}
 
 ensure_venv() {
   if [ ! -d "$VENV" ]; then
@@ -65,11 +87,17 @@ start_bg() {
     echo "uvicorn already running (pid $(cat "$PIDFILE"))"
     return 0
   fi
-  # `set +H` disables bash history expansion so `$!` is treated as
-  # "last background pid" instead of being clobbered.
+  rm -f "$PIDFILE" "$LOGFILE"
+  # Disable history expansion so $! is treated as the last bg pid.
   set +H
-  ( cd "$PROXY_DIR" && nohup "$UVICORN" app:app --host "$HOST" --port "$PORT" \
-      > proxy.log 2>&1 & echo $! > .uvicorn.pid )
+  # Launch in a subshell with its own cwd, then capture the pid via the
+  # resulting log line. This avoids the trickiness of $! inside a
+  # backgrounded paren group.
+  (
+    cd "$PROXY_DIR"
+    nohup "$UVICORN" app:app --host "$HOST" --port "$PORT" >> proxy.log 2>&1 &
+    echo $! > .uvicorn.pid
+  )
   sleep 1
   if [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "uvicorn started (pid $(cat "$PIDFILE")), logs -> $LOGFILE"
@@ -132,12 +160,13 @@ usage() {
 Usage: $0 [command]
 
 Commands:
-  run     Start uvicorn in the foreground (default)
-  bg      Start uvicorn in the background (logs -> $LOGFILE)
-  stop    Stop the background uvicorn
-  status  Show pid + health check
-  test    Run curl smoke tests against the running proxy
-  help    Show this message
+  run          Start uvicorn in the foreground (default)
+  bg           Start uvicorn in the background (logs -> $LOGFILE)
+  stop         Stop the background uvicorn
+  status       Show pid + health check
+  test         Run curl smoke tests against the running proxy
+  claude-env   Print 'export ANTHROPIC_BASE_URL=...; export ANTHROPIC_API_KEY=...'
+  help         Show this message
 
 Env overrides:
   HOST=0.0.0.0 PORT=8080
@@ -150,6 +179,7 @@ case "$cmd" in
     ensure_deps
     ensure_env
     warn_if_placeholder_key
+    print_claude_banner
     ( cd "$PROXY_DIR" && exec "$UVICORN" app:app --host "$HOST" --port "$PORT" )
     ;;
   bg)
@@ -158,6 +188,7 @@ case "$cmd" in
     ensure_env
     warn_if_placeholder_key
     start_bg
+    print_claude_banner
     ;;
   stop)
     stop_bg
@@ -167,6 +198,9 @@ case "$cmd" in
     ;;
   test)
     do_test
+    ;;
+  claude-env)
+    print_claude_exports
     ;;
   help|-h|--help)
     usage

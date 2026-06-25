@@ -1,13 +1,20 @@
 # Claude Code -> OpenCode Go proxy
 #
 # One-command usage:
-#   make run       # bootstrap venv + deps + .env, then start uvicorn in the foreground
-#   make bg        # start uvicorn in the background, write logs to proxy/proxy.log
-#   make stop      # stop the background uvicorn
-#   make status    # show whether the background uvicorn is up + health
-#   make test      # curl-based smoke tests against the running proxy
-#   make clean     # remove venv, caches, log, .env (asks before destructive steps)
-#   make help      # list targets
+#   make run         # bootstrap venv + deps + .env, then start uvicorn in foreground
+#   make bg          # start uvicorn in background, write logs to proxy/proxy.log
+#   make stop        # stop the background uvicorn
+#   make status      # show whether the background uvicorn is up + health
+#   make test        # curl-based smoke tests against the running proxy
+#   make claude-env  # print export lines for Claude Code
+#   make clean       # remove venv, caches, log, .env (asks before destructive steps)
+#   make help        # list targets
+#
+# Then in another terminal, point Claude Code at the proxy:
+#   eval "$(make claude-env)"   # or just:
+#   export ANTHROPIC_BASE_URL=http://localhost:8080
+#   export ANTHROPIC_API_KEY=dummy
+#   claude
 
 PROXY_DIR    := proxy
 VENV         := $(PROXY_DIR)/.venv
@@ -22,9 +29,24 @@ PORT         ?= 8080
 ENV_FILE     := $(PROXY_DIR)/.env
 ENV_EXAMPLE  := $(PROXY_DIR)/.env.example
 
+# Claude Code env (so the proxy is the only thing it talks to).
+# Always point at this proxy on localhost — do not inherit any upstream
+# ANTHROPIC_* values from the environment.
+ANTHROPIC_BASE_URL := http://localhost:$(PORT)
+ANTHROPIC_API_KEY  := dummy
+
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install env run bg stop status test clean
+.PHONY: help venv install env run bg stop status test clean claude-env
+
+CLAUDE_ENV_BANNER = \
+	echo ""; \
+	echo "==> Claude Code env (run these in any other terminal, or eval them):"; \
+	echo "    export ANTHROPIC_BASE_URL=$(ANTHROPIC_BASE_URL)"; \
+	echo "    export ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY)"; \
+	echo ""
+
+
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,6 +77,7 @@ run: install env ## Bootstrap + start uvicorn in the foreground.
 		echo "!! Edit $(ENV_FILE) and replace it with your real key."; \
 		echo ""; \
 	fi
+	@$(CLAUDE_ENV_BANNER)
 	@cd $(PROXY_DIR) && $(UVICORN) app:app --host $(HOST) --port $(PORT)
 
 bg: install env ## Start uvicorn in the background (logs -> proxy.log).
@@ -66,6 +89,7 @@ bg: install env ## Start uvicorn in the background (logs -> proxy.log).
 	@sleep 1
 	@if [ -s "$(PIDFILE)" ] && kill -0 `cat $(PIDFILE)` 2>/dev/null; then \
 		echo "uvicorn started (pid `cat $(PIDFILE)`), logs -> $(LOGFILE)"; \
+		$(CLAUDE_ENV_BANNER); \
 	else \
 		echo "uvicorn failed to start; last log lines:"; \
 		tail -n 20 $(LOGFILE) || true; \
@@ -124,3 +148,7 @@ clean: ## Remove venv, caches, log, pidfile, .env (asks before deleting .env).
 		case "$$ans" in [yY]*) rm -f "$(ENV_FILE)"; echo "deleted";; *) echo "kept";; esac; \
 	fi
 	@echo "cleaned"
+
+claude-env: ## Print export lines for ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY.
+	@echo "export ANTHROPIC_BASE_URL=$(ANTHROPIC_BASE_URL)"
+	@echo "export ANTHROPIC_API_KEY=$(ANTHROPIC_API_KEY)"
