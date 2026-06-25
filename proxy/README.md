@@ -1,26 +1,29 @@
-# Claude Code → DeepSeek V4 Flash Proxy
+# Claude Code → OpenCode Go Multi-Model Proxy
 
 A small, production-quality proxy server that lets **Claude Code** talk to
-**DeepSeek V4 Flash** through **OpenCode Zen Go's** OpenAI-compatible chat
-completions API.
-
-Claude Code thinks it's talking to Anthropic (`POST /v1/messages` with the
-Anthropic Messages API shape). Internally, the proxy translates the request
-into an OpenAI Chat Completion call against
-`https://opencode.ai/zen/go/v1/chat/completions`, using the configured
-upstream model (`deepseek-v4-flash` by default).
+multiple models on **OpenCode Zen Go's** OpenAI-compatible chat completions
+API. You pick a model in Claude Code with `/model`; the proxy routes each
+request to the right upstream.
 
 ```
 +----------------+        +-------------------+        +----------------------+
 |  Claude Code   |  --->  |  This Proxy       |  --->  | OpenCode Zen Go API  |
 |  (Anthropic)   |  <---  |  (FastAPI / SSE)  |  <---  | (OpenAI-compatible)  |
 +----------------+        +-------------------+        +----------------------+
-                          pins model = deepseek-v4-flash
+                          routes by incoming `model`
 ```
+
+The Anthropic `model` field is now **load-bearing**: it tells the proxy which
+upstream to use. Aliases are configured via env vars (see below). Default
+example pairs `deepseek` with `deepseek-v4-flash` and `minimax` with
+`minimax-m3` on the same OpenCode Go endpoint.
 
 ## Features
 
 - Anthropic-compatible `POST /v1/messages` endpoint.
+- Multi-model routing — one OpenCode account, many models.
+- `/v1/models` lists every configured alias so Claude Code's model picker
+  shows them.
 - Translates Anthropic requests → OpenAI Chat Completions.
 - Translates OpenAI streaming chunks → Anthropic SSE events
   (`message_start`, `content_block_start`, `content_block_delta`,
@@ -28,9 +31,7 @@ upstream model (`deepseek-v4-flash` by default).
 - Streaming and non-streaming paths.
 - 401 / 429 / timeout / invalid-request error handling with passthrough
   status codes.
-- Upstream model is pinned — incoming `model` is ignored.
-- Pluggable translator; tool-calling can be added without touching the
-  transport layer.
+- Adding a new model is a single env entry — no code change.
 
 ## Requirements
 
@@ -50,8 +51,15 @@ Copy the example env file and set your key:
 
 ```bash
 cp .env.example .env
-# edit .env and replace OPENCODE_API_KEY
+# edit .env — at minimum, set OPENCODE_API_KEY
 ```
+
+The shipped `.env.example` configures two models out of the box:
+
+| Alias (Anthropic-side) | Upstream slug (OpenCode Go) |
+| ---------------------- | --------------------------- |
+| `deepseek`             | `deepseek-v4-flash`         |
+| `minimax`              | `minimax-m3`                |
 
 ## Run
 
@@ -59,22 +67,24 @@ cp .env.example .env
 uvicorn app:app --host 0.0.0.0 --port 8080
 ```
 
-Or, with auto-reload during development:
+Or with auto-reload during development:
 
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-You should see something like:
+You should see:
 
 ```
-Proxy ready -> https://opencode.ai/zen/go/v1 (model=deepseek-v4-flash, timeout=120s)
+INFO [claude-proxy]   route: deepseek   -> deepseek-v4-flash
+INFO [claude-proxy]   route: minimax    -> minimax-m3
+INFO [claude-proxy] Proxy ready -> https://opencode.ai/zen/go/v1 (default=deepseek-v4-flash, timeout=120s)
 ```
 
 ## Configuration (Claude Code)
 
-Point Claude Code at the proxy with two environment variables. The API key
-can be any non-empty string — it is never sent to the upstream.
+Point Claude Code at the proxy. The API key can be any non-empty string — it
+is never sent to the upstream.
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
@@ -83,28 +93,72 @@ export ANTHROPIC_API_KEY=dummy
 claude
 ```
 
-If you prefer a per-project setting, drop the same two lines into a
-`.envrc` / shell profile / Claude Code settings file.
+Inside Claude Code, switch models with:
+
+```
+/model deepseek
+/model minimax
+```
+
+Both names are listed in `/v1/models` and resolve to the right upstream.
 
 ## Endpoints
 
-| Method | Path           | Purpose                                             |
-| ------ | -------------- | --------------------------------------------------- |
-| `POST` | `/v1/messages` | Anthropic Messages API. Streams when `stream=true`. |
-| `GET`  | `/v1/models`   | Minimal model list (Claude Code discovery).         |
-| `GET`  | `/healthz`     | Liveness check.                                     |
+| Method | Path           | Purpose                                                                |
+| ------ | -------------- | ---------------------------------------------------------------------- |
+| `POST` | `/v1/messages` | Anthropic Messages API. Streams when `stream=true`.                    |
+| `GET`  | `/v1/models`   | List of all configured aliases. Claude Code uses this for `/model`.    |
+| `GET`  | `/healthz`     | Liveness + current routing table.                                      |
 
 ## Environment variables
 
-| Variable            | Required | Default                              | Notes                                       |
-| ------------------- | -------- | ------------------------------------ | ------------------------------------------- |
-| `OPENCODE_API_KEY`  | yes      | —                                    | Bearer token sent to the upstream.          |
-| `OPENCODE_BASE_URL` | no       | `https://opencode.ai/zen/go/v1`      | Override to point at a different gateway.   |
-| `OPENCODE_MODEL`    | no       | `deepseek-v4-flash`                  | Upstream model. Incoming `model` is ignored.|
-| `UPSTREAM_TIMEOUT`  | no       | `120`                                | Seconds before the upstream is abandoned.   |
-| `HOST`              | no       | `0.0.0.0`                            | Informational; pass to uvicorn yourself.    |
-| `PORT`              | no       | `8080`                               | Informational; pass to uvicorn yourself.    |
-| `LOG_LEVEL`         | no       | `info`                               | `debug`, `info`, `warning`, `error`.        |
+### Shared
+
+| Variable            | Required | Default                              | Notes                                              |
+| ------------------- | -------- | ------------------------------------ | -------------------------------------------------- |
+| `OPENCODE_API_KEY`  | yes      | —                                    | Bearer token sent to the upstream.                 |
+| `OPENCODE_BASE_URL` | no       | `https://opencode.ai/zen/go/v1`      | Override to point at a different gateway.          |
+| `UPSTREAM_TIMEOUT`  | no       | `120`                                | Seconds before the upstream is abandoned.          |
+| `LOG_LEVEL`         | no       | `info`                               | `debug`, `info`, `warning`, `error`.               |
+
+### Per-model routing
+
+Each model is described by a numbered triple of env vars. The number just
+orders the entries; pick any positive integer, but keep them consecutive and
+unique.
+
+```
+MODEL_<N>_ALIAS=<name-claude-code-sends>
+MODEL_<N>_UPSTREAM=<slug-opencode-accepts>
+MODEL_<N>_DISPLAY=<human-friendly-label>     # optional
+```
+
+The first entry (lowest `N`) is the default if a request omits `model` or
+sends something the proxy doesn't recognise.
+
+#### Example: two models
+
+```
+OPENCODE_API_KEY=sk-zen-...
+OPENCODE_BASE_URL=https://opencode.ai/zen/go/v1
+
+MODEL_1_ALIAS=deepseek
+MODEL_1_UPSTREAM=deepseek-v4-flash
+MODEL_1_DISPLAY=DeepSeek V4 Flash (via OpenCode Go)
+
+MODEL_2_ALIAS=minimax
+MODEL_2_UPSTREAM=minimax-m3
+MODEL_2_DISPLAY=MiniMax M3 (via OpenCode Go)
+```
+
+#### Example: add a third model
+
+```
+MODEL_3_ALIAS=kimi
+MODEL_3_UPSTREAM=kimi-k2.6
+```
+
+Restart `uvicorn` and `/v1/models` will show the new entry.
 
 ## Supported request fields
 
@@ -113,8 +167,8 @@ currently ignored.
 
 | Anthropic field   | Status      |
 | ----------------- | ----------- |
-| `model`           | accepted but ignored — always uses the upstream model |
-| `messages`        | supported (text, `tool_use`, `tool_result` blocks) |
+| `model`           | **used for routing** — must match a configured alias |
+| `messages`        | supported (text, `tool_use`, `tool_result` blocks)    |
 | `max_tokens`      | supported   |
 | `system`          | supported (string or list of text blocks) |
 | `temperature`     | supported   |
@@ -130,6 +184,7 @@ currently ignored.
 ```
 proxy/
 ├── app.py            # FastAPI routes, transport, error handling
+├── config.py         # Multi-model config loader (MODEL_*_ALIAS / _UPSTREAM)
 ├── translator.py     # Anthropic <-> OpenAI request/response translation
 ├── stream.py         # OpenAI SSE -> Anthropic SSE translation
 ├── requirements.txt
@@ -137,26 +192,45 @@ proxy/
 └── README.md
 ```
 
-`translator.py` is pure data in / data out (no I/O), which makes it easy to
-unit-test. `stream.py` consumes an async iterator of upstream lines and yields
+`config.py` knows only about env vars and the route table. `translator.py`
+is pure data in / data out (no I/O), which makes it easy to unit-test.
+`stream.py` consumes an async iterator of upstream lines and yields
 Anthropic-formatted SSE strings — no knowledge of FastAPI or httpx leaks in.
 
 ## Testing with curl
 
-### Non-streaming
+### Non-streaming (explicit model)
 
 ```bash
 curl -s http://localhost:8080/v1/messages \
   -H "content-type: application/json" \
   -H "x-api-key: dummy" \
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "deepseek",
     "max_tokens": 256,
     "messages": [
       {"role": "user", "content": "Say hello in one short sentence."}
     ]
   }'
 ```
+
+### Non-streaming (other model)
+
+```bash
+curl -s http://localhost:8080/v1/messages \
+  -H "content-type: application/json" \
+  -H "x-api-key: dummy" \
+  -d '{
+    "model": "minimax",
+    "max_tokens": 256,
+    "messages": [
+      {"role": "user", "content": "Say hello in one short sentence."}
+    ]
+  }'
+```
+
+The only difference is the `model` field; the proxy picks the right
+upstream automatically.
 
 ### Streaming
 
@@ -165,7 +239,7 @@ curl -N http://localhost:8080/v1/messages \
   -H "content-type: application/json" \
   -H "x-api-key: dummy" \
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "deepseek",
     "max_tokens": 256,
     "stream": true,
     "messages": [
@@ -196,22 +270,32 @@ event: message_stop
 data: {"type":"message_stop"}
 ```
 
-### Health check
+### Health check + routing table
 
 ```bash
 curl -s http://localhost:8080/healthz
-# => {"status":"ok","model":"deepseek-v4-flash","upstream":"https://opencode.ai/zen/go/v1"}
+# => {"status":"ok","default_model":"deepseek","models":["deepseek","minimax"],"upstream":"https://opencode.ai/zen/go/v1"}
 ```
 
-### Inspecting model discovery
+### Model discovery (used by Claude Code's `/model` picker)
 
 ```bash
-curl -s http://localhost:8080/v1/models
+curl -s http://localhost:8080/v1/models | jq
+```
+
+```json
+{
+  "data": [
+    {"id": "deepseek", "type": "model", "display_name": "DeepSeek V4 Flash (via OpenCode Go)"},
+    {"id": "minimax",  "type": "model", "display_name": "MiniMax M3 (via OpenCode Go)"}
+  ]
+}
 ```
 
 ## Error semantics
 
-- `400 invalid_request_error` — the inbound JSON failed validation.
+- `400 invalid_request_error` — the inbound JSON failed validation, or
+  `model` did not match any configured alias.
 - `401` / `429` (and any other upstream status) — passthrough, wrapped in
   Anthropic's `{"type":"error","error":{...}}` envelope.
 - `502 upstream_error` — the upstream connection failed, timed out, or
@@ -223,13 +307,14 @@ client sees a structured error rather than a truncated stream.
 
 ## Extending
 
-- **Tool calling**: hook the real `tool_use` / `tool_result` blocks into
-  `translator._flatten_content` and add a separate `openai_tool_call_to_anthropic`
-  helper. The streaming layer already has hooks (`text_started`, block index)
-  for emitting a second content block.
-- **Additional providers**: keep `translator.py` pure and add a new
-  `*_to_openai` adapter next to it.
-- **Caching / rate limiting**: wrap `request.app.state.http` in middleware.
+- **More models** — add a `MODEL_<N>_*` triple in `.env` and restart.
+- **Different providers per model** — today every model uses
+  `OPENCODE_BASE_URL` + `OPENCODE_API_KEY`. If you want one alias to hit
+  OpenRouter, etc., add `MODEL_<N>_BASE_URL` / `MODEL_<N>_API_KEY`
+  overrides in `config.py` (small change).
+- **Tool calling** — see the previous architecture notes; the streaming
+  layer already has hooks for emitting a second content block.
+- **Caching / rate limiting** — wrap `request.app.state.http` in middleware.
 
 ## License
 

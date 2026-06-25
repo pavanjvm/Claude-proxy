@@ -185,8 +185,9 @@ def anthropic_to_openai(
 ) -> dict[str, Any]:
     """Translate an Anthropic Messages request into an OpenAI Chat Completion body.
 
-    The Anthropic `model` field is intentionally ignored — we always pin to the
-    configured upstream model (DeepSeek V4 Flash by default).
+    The caller picks `upstream_model` based on the routing decision (see
+    `config.ProxyConfig.resolve`). The Anthropic-side `req.model` is only used
+    to surface the original alias back to the client in the response.
     """
     messages: list[dict[str, str]] = []
     system_msgs = _system_to_openai(req.system)
