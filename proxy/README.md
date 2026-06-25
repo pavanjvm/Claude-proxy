@@ -38,7 +38,52 @@ example pairs `deepseek` with `deepseek-v4-flash` and `minimax` with
 - Python 3.11+
 - An OpenCode Zen Go API key (set as `OPENCODE_API_KEY`).
 
-## Installation
+## Quick start (one command)
+
+A `Makefile` and a `run.sh` script at the repo root bootstrap the venv, install
+deps, create `.env` if it's missing, and start the proxy — including the
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` exports you need for Claude Code.
+
+```bash
+# from the repo root
+make bg                                    # background mode
+# or
+./run.sh bg
+```
+
+You'll see:
+
+```
+uvicorn started (pid #####), logs -> proxy/proxy.log
+
+==> Claude Code env (run in any other terminal, or eval them):
+    export ANTHROPIC_BASE_URL=http://localhost:8080
+    export ANTHROPIC_API_KEY=dummy
+```
+
+Then in **any other terminal** where you want to run Claude Code:
+
+```bash
+eval "$(make claude-env)"   # or: eval "$(./run.sh claude-env)"
+claude
+```
+
+Inside Claude Code, run `/model` to pick between `deepseek` and `minimax`.
+
+### All commands
+
+| `make` target   | `./run.sh`          | What it does                                    |
+| --------------- | ------------------- | ----------------------------------------------- |
+| `make run`      | `./run.sh`          | Foreground uvicorn (Ctrl-C to stop)             |
+| `make bg`       | `./run.sh bg`       | Background uvicorn, logs → `proxy/proxy.log`    |
+| `make stop`     | `./run.sh stop`     | Stop the background uvicorn                     |
+| `make status`   | `./run.sh status`   | Show pid + `/healthz`                           |
+| `make test`     | `./run.sh test`     | Curl smoke tests (real upstream calls)          |
+| `make claude-env` | `./run.sh claude-env` | Print `export ANTHROPIC_BASE_URL=...; export ANTHROPIC_API_KEY=...` (eval-able) |
+| `make help`     | `./run.sh help`     | List targets                                    |
+| `make clean`    | —                   | Wipe venv, caches, logs (asks before deleting `.env`) |
+
+## Manual install (if you'd rather not use the scripts)
 
 ```bash
 cd proxy
@@ -61,15 +106,11 @@ The shipped `.env.example` configures two models out of the box:
 | `deepseek`             | `deepseek-v4-flash`         |
 | `minimax`              | `minimax-m3`                |
 
-## Run
+Then run uvicorn directly:
 
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 8080
-```
-
-Or with auto-reload during development:
-
-```bash
+# or with auto-reload:
 uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 ```
 
@@ -81,15 +122,11 @@ INFO [claude-proxy]   route: minimax    -> minimax-m3
 INFO [claude-proxy] Proxy ready -> https://opencode.ai/zen/go/v1 (default=deepseek-v4-flash, timeout=120s)
 ```
 
-## Configuration (Claude Code)
-
-Point Claude Code at the proxy. The API key can be any non-empty string — it
-is never sent to the upstream.
+## Pointing Claude Code at the proxy (without the scripts)
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_API_KEY=dummy
-
+export ANTHROPIC_API_KEY=dummy      # any non-empty string — never sent upstream
 claude
 ```
 
