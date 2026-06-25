@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(firecrawl-search)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)"
+    ]
+  }
+}
